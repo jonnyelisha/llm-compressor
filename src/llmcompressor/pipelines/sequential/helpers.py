@@ -1,7 +1,7 @@
 import inspect
 from collections import deque
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional, Set, Union
+from typing import Any, Callable, Dict, Iterator, List, Optional, Set, Union
 
 import torch
 from compressed_tensors import has_offloaded_params
@@ -9,7 +9,7 @@ from compressed_tensors.quantization import find_name_or_class_matches
 from loguru import logger
 from torch.fx import Graph, GraphModule, Node, _symbolic_trace
 from torch.fx.graph import PythonCode
-from torch.fx.proxy import Argument
+from torch.fx.proxy import Argument, Proxy
 from torch.nn import Module
 from transformers import PreTrainedModel
 from transformers.configuration_utils import PretrainedConfig
@@ -95,9 +95,7 @@ def trace_subgraphs(
     # trace
     with calibration_forward_context(model), HooksMixin.disable_hooks(), patch_attr(
         torch.compiler, "_is_compiling_flag", True
-    ), patch_attr(
-        model.config, "_attn_implementation", "eager"
-    ):
+    ), patch_attr(model.config, "_attn_implementation", "eager"):
         graph = GraphModule(
             model,
             tracer.trace(
@@ -161,7 +159,7 @@ def get_tracer(model: Module, sequential_targets: Set[Module]) -> HFTracer:
 
         def is_leaf_module(self, module: Module, module_qualified_name: str) -> bool:
             return module not in sequential_ancestors or module in offloaded_modules
-        
+
         def iter(self, obj: Proxy) -> Iterator:
             # special extension which allows torch.Sizes to be iterated, but keeps
             # their values as dynamic
@@ -172,6 +170,9 @@ def get_tracer(model: Module, sequential_targets: Set[Module]) -> HFTracer:
                 return iter(obj[i] for i in range(len(obj)))
 
             return super().iter(obj)
+        
+        def to_bool(self, obj):
+            return super().to_bool(obj)
 
         def trace(self, root: Union[Module, Callable], *args, **kwargs) -> Graph:
             if isinstance(root, Module):
