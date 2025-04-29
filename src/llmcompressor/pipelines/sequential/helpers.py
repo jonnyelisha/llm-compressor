@@ -95,7 +95,7 @@ def trace_subgraphs(
     # trace
     with calibration_forward_context(model), HooksMixin.disable_hooks(), patch_attr(
         torch.compiler, "_is_compiling_flag", True
-    ), patch_attr(model.config, "_attn_implementation", "eager"):
+    ), patch_attr(model.config, "_attn_implementation", "eager"), patch_attr(torch.jit, "is_tracing", lambda: True):
         graph = GraphModule(
             model,
             tracer.trace(

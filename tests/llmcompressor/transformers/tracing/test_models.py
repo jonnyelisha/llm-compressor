@@ -1,5 +1,5 @@
 import pytest
-from transformers import AutoModelForCausalLM, Qwen2VLForConditionalGeneration
+from transformers import AutoModelForCausalLM, Qwen2VLForConditionalGeneration, Qwen2_5_VLForConditionalGeneration
 
 from llmcompressor.transformers.tracing import (
     TraceableIdefics3ForConditionalGeneration,
@@ -31,18 +31,18 @@ def test_text_trace(model_id, model_class, targets):
 @pytest.mark.parametrize(
     "model_id,model_class,targets,ignore",
     [
-        (
-            "Qwen/Qwen2-VL-2B-Instruct",
-            Qwen2VLForConditionalGeneration,
-            ["Qwen2VLDecoderLayer"],
-            ["_update_causal_mask"],
-        ),
         # (
-        #     "Qwen/Qwen2.5-VL-7B-Instruct",
-        #     TraceableQwen2_5_VLForConditionalGeneration,
-        #     None,
-        #     ["lm_head", "re:visual.*"],
+        #     "Qwen/Qwen2-VL-2B-Instruct",
+        #     Qwen2VLForConditionalGeneration,
+        #     ["Qwen2VLDecoderLayer"],
+        #     ["_update_causal_mask"],
         # ),
+        (
+            "Qwen/Qwen2.5-VL-7B-Instruct",
+            Qwen2_5_VLForConditionalGeneration,
+            ["Qwen2_5_VLDecoderLayer"],
+            ["_update_causal_mask", "get_rope_index"],
+        ),
         # (
         #     "mgoin/pixtral-12b",
         #     TraceableLlavaForConditionalGeneration,
