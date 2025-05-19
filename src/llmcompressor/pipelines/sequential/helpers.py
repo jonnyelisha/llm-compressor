@@ -225,20 +225,17 @@ def populate_concrete_args(model: Module, sample_input: Dict) -> Dict:
     return concrete_args
 
 
-def find_target_nodes(graph: GraphModule, targets: Set[Module]) -> Set[Node]:
-    """
-    Find all nodes whose execution is equivalent to executing the target modules.
-    Note that these nodes are guaranteed to be treated as leaf nodes by SequentialTracer
+def match_node_to_target(graph: GraphModule, node: Node, targets: Set[Module]) -> Optional[Module]:
+    if node.op != "call_module":
+        return None
+    
+    node_module = graph.get_submodule(node.target)
+    for target in targets:
+        if isinstance(node_module, target):
+            return target
+        
+    return None
 
-    :param graph: graph containing target nodes
-    :param targets: modules whose nodes are being searched for
-    :return: set of all nodes which call the target modules
-    """
-    return set(
-        node
-        for node in graph.graph.nodes
-        if node.op == "call_module" and graph.get_submodule(node.target) in targets
-    )
 
 
 def topological_partition(graph: GraphModule, targets: Set[Module]) -> List[List[Node]]:
@@ -253,7 +250,6 @@ def topological_partition(graph: GraphModule, targets: Set[Module]) -> List[List
         that partition
     """
     assert graph_is_well_formed(graph.graph)
-    target_nodes = find_target_nodes(graph, targets)
 
     partitions: List[List[Node]] = [[]]
     remaining_indegrees = {
@@ -262,9 +258,11 @@ def topological_partition(graph: GraphModule, targets: Set[Module]) -> List[List
     }
     partition_index = 0  # global counter
 
+    targets_counter = {target: 0 for target in targets}
+    targets_max = {target: 1 for target in targets}
     # HARD CODE
-    num_linears_per_subgraph = 64
-    linears_counter = 64  # first linear gets its own partition
+    from transformers.models.llama4.modeling_llama4 import Llama4TextMLP
+    targets_max[Llama4TextMLP] = 64
 
     # start with graph input nodes,
     # but delay the `get_attr` nodes as long as possible
@@ -280,17 +278,14 @@ def topological_partition(graph: GraphModule, targets: Set[Module]) -> List[List
         partitions[partition_index].append(node)
 
         # guarantee targets are assigned to disjoint partitions
-        if node in target_nodes:
-            if graph.get_submodule(node.target).__class__.__name__ == "Llama4TextMLP":
-                if linears_counter >= num_linears_per_subgraph:
-                    partition_index += 1
-                    partitions.append([])
-                    linears_counter = 0
-
-                linears_counter += 1
-            else:
+        matched = match_node_to_target(graph, node, targets)
+        if matched is not None:
+            targets_counter[matched] += 1
+            
+            if targets_counter[matched] >= targets_max[matched]:
                 partition_index += 1
                 partitions.append([])
+                targets_counter[matched] = 0
 
         # recurse on last indegree only in order to guarantee that
         # the node is assigned to maximal partition

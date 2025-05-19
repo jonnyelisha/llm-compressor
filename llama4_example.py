@@ -10,17 +10,17 @@ from llmcompressor.utils.llama4 import linearize_moe
 
 # Load model.
 model_id = "meta-llama/Llama-4-Maverick-17B-128E-Instruct"
-#with skip_weights_download(Llama4ForConditionalGeneration):
-model = Llama4ForConditionalGeneration.from_pretrained(
-    model_id, torch_dtype=torch.bfloat16  # load on cpu
-)
+with skip_weights_download(Llama4ForConditionalGeneration):
+    model = Llama4ForConditionalGeneration.from_pretrained(
+        model_id, torch_dtype=torch.bfloat16  # load on cpu
+    )
 processor = AutoProcessor.from_pretrained(model_id, trust_remote_code=True)
 
 model = linearize_moe(model)
 
 # Oneshot arguments
 DATASET_ID = "flickr30k"
-NUM_CALIBRATION_SAMPLES = 512
+NUM_CALIBRATION_SAMPLES = 4#512
 MAX_SEQUENCE_LENGTH = 2048
 DATASET_SPLIT = {"calibration": f"test[:{NUM_CALIBRATION_SAMPLES}]"}
 
@@ -43,7 +43,6 @@ recipe = [
             "language_model.lm_head",
             "re:vision_model.*",
         ],
-        #sequential_targets=["Llama4TextDecoderLayer"],
         sequential_targets=["Llama4TextAttention", "Llama4TextMLP"],
     ),
 ]
