@@ -111,7 +111,7 @@ class GPTQModifier(Modifier, QuantizationMixin):
     sequential_targets: Union[str, List[str], None] = None
     block_size: int = 128
     dampening_frac: Optional[float] = 0.01
-    actorder: Optional[Union[ActivationOrdering, Sentinel]] = Sentinel("STATIC")
+    actorder: Optional[Union[ActivationOrdering, Sentinel]] = Sentinel("static")
     offload_hessians: bool = False
 
     # private variables
@@ -135,7 +135,7 @@ class GPTQModifier(Modifier, QuantizationMixin):
 
         def resolve_actorder(existing):
             # sentinel default only overrides if existing is None
-            if self.actorder == Sentinel("STATIC"):
+            if self.actorder == Sentinel("static"):
                 return ActivationOrdering.STATIC if existing is None else existing
 
             # user-provided value always attempts to override
