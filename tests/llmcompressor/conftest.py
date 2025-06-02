@@ -92,3 +92,26 @@ def setup_fresh_session():
     yield
     # reset the session after each test
     reset_session()
+
+
+@pytest.fixture(autouse=True)
+def log_vram_stats(request: pytest.FixtureRequest):
+    yield
+    from pathlib import Path
+    import torch
+
+    VRAM_LOGFILE = os.environ.get("VRAM_LOGFILE", "vram-log.txt")
+    TEST_FILE = Path(request.node.path).relative_to(os.getcwd())
+    LONG_TEST_NAME = f"{str(TEST_FILE)}::{request.node.name}"
+
+    device = torch.device("cuda:0")
+    free, total = torch.cuda.mem_get_info(device)
+    used = total - free
+
+    LINES = [
+        f">>> GPU memory (in GiB) after {LONG_TEST_NAME}\n",
+        f"    {used / 1024**3} used, {free / 1024**3} free, {total / 1024**3} total\n",
+    ]
+
+    with open(VRAM_LOGFILE, "a") as f:
+        f.writelines(LINES)
