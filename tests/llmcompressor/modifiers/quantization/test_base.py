@@ -45,7 +45,9 @@ def q_config_kwargs(config_0, config_1):
         # modifier overrides if config partially matches anyways
         (True, "group", None, "group", "group", "group"),
         (True, "group", "group", None, "group", "group"),
-        # modifier errors if conflict with config
+        # modifier errors if explicitly conflicts with config
+        (True, "static", None, "group", "error", "error"),
+        (True, "static", "group", None, "error", "error"),
         (True, "group", None, "static", "error", "error"),
         (True, "group", "static", None, "error", "error"),
         # modifier overrides to static if nothing is provided
