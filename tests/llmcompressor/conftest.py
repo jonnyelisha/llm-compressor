@@ -1,9 +1,11 @@
 import os
 import shutil
+import sys
 import tempfile
 from typing import List
 
 import pytest
+from loguru import logger
 
 try:
     import wandb
@@ -13,6 +15,8 @@ except Exception:
 
 os.environ["NM_TEST_MODE"] = "True"
 os.environ["NM_TEST_LOG_DIR"] = "nm_temp_test_logs"
+
+logger.add(sys.stderr, format="{time} {level} {message}", level="TRACE")
 
 
 def _get_files(directory: str) -> List[str]:
@@ -100,7 +104,6 @@ def log_vram_stats(request: pytest.FixtureRequest):
     from pathlib import Path
     import torch
 
-    VRAM_LOGFILE = os.environ.get("VRAM_LOGFILE", "vram-log.txt")
     TEST_FILE = Path(request.node.path).relative_to(os.getcwd())
     LONG_TEST_NAME = f"{str(TEST_FILE)}::{request.node.name}"
 
@@ -108,10 +111,7 @@ def log_vram_stats(request: pytest.FixtureRequest):
     free, total = torch.cuda.mem_get_info(device)
     used = total - free
 
-    LINES = [
-        f">>> GPU memory (in GiB) after {LONG_TEST_NAME}\n",
-        f"    {used / 1024**3} used, {free / 1024**3} free, {total / 1024**3} total\n",
-    ]
-
-    with open(VRAM_LOGFILE, "a") as f:
-        f.writelines(LINES)
+    MESSAGE = "VRAM post {}: {:.2f} used, {:.2f} free, {:.2f} total"
+    logger.info(
+        MESSAGE, LONG_TEST_NAME, used / 1024**3, free / 1024**3, total / 1024**3
+    )
