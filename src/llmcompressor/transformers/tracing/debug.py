@@ -7,7 +7,6 @@ import torch
 import transformers
 from transformers import AutoProcessor, PreTrainedModel
 
-from llmcompressor.transformers import tracing
 from llmcompressor.utils.pytorch.module import get_no_split_params
 from llmcompressor.pipelines.sequential.helpers import trace_subgraphs, Subgraph
 from llmcompressor.transformers import TextGenerationDataset
@@ -15,7 +14,7 @@ from llmcompressor.args import DatasetArguments
 
 from llmcompressor.utils.dev import skip_weights_download
 
-__all__ = ["get_model_class"]
+__all__ = ["trace"]
 
 
 def parse_args():
@@ -23,7 +22,7 @@ def parse_args():
     parser.add_argument("--model_id", type=str, required=True, help="The stub of the model to load")  # noqa: E501
     parser.add_argument("--model_class", type=str, required=True, help="The class name of the model")  # noqa: E501
     parser.add_argument("--sequential_targets", type=str, nargs="*", default=None, metavar="TARGET", help="List of targets for sequential tracing")  # noqa: E501
-    parser.add_argument("--ignore", type=str, nargs="*", default=[], metavar="PATTERN", help="List of patterns to ignore during tracing")  # noqa: E501
+    parser.add_argument("--ignore", type=str, nargs="*", default=["_update_causal_mask"], metavar="PATTERN", help="List of patterns to ignore during tracing")  # noqa: E501
     parser.add_argument("--modality", type=str, default="text", help="Modality of calibration dataset, defaults to text")  # noqa: E501
     parser.add_argument("--trust_remote_code", type=bool, default=False, help="Whether to trust model remote code")  # noqa: E501
     parser.add_argument("--skip_weights", type=bool, default=True, help="Whether to load the model with dummy weights")  # noqa: E501
@@ -111,14 +110,6 @@ def trace(
     return model, subgraphs, sample
 
 
-def get_model_class(model_class: str) -> Type[PreTrainedModel]:
-    model_cls = getattr(tracing, model_class, getattr(transformers, model_class, None))
-    if model_cls is None:
-        raise ValueError(f"Could not import model class {model_class}")
-
-    return model_cls
-
-
 def get_dataset_kwargs(modality: str, ignore: List[str]) -> Dict[str, str]:
     dataset_kwargs = {
         "text": {
@@ -167,7 +158,7 @@ def main():
 
     trace(
         model_id=args.model_id,
-        model_class=get_model_class(args.model_class),
+        model_class=getattr(transformers, args.model_class),
         sequential_targets=args.sequential_targets,
         ignore=args.ignore,
         modality=args.modality,
