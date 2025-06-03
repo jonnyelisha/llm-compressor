@@ -52,7 +52,7 @@ def q_config_kwargs(config_0, config_1):
         (False, "N/A", None, "static", "static", "static"),
         (False, "N/A", "static", None, "static", "static"),
         (False, "N/A", "static", "static", "static", "static"),
-        # modifier does not override set config vaules if nothing is provided
+        # modifier does not override set config vaules
         (False, "N/A", None, "group", "static", "group"),
         (False, "N/A", "group", None, "group", "static"),
         (False, "N/A", "group", "group", "group", "group"),
