@@ -1,5 +1,7 @@
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
+from llmcompressor.utils.dev import dispatch_for_generation
+
 """
 This example covers how to load a quantized model using AutoModelForCausalLM.
 
@@ -19,7 +21,11 @@ SAMPLE_INPUT = [
     "def fibonacci(n):",
 ]
 
-compressed_model = AutoModelForCausalLM.from_pretrained(MODEL_STUB, torch_dtype="auto")
+compressed_model = AutoModelForCausalLM.from_pretrained(
+    MODEL_STUB,
+    torch_dtype="auto",
+    device_map="cuda:0",
+)
 
 # tokenize the sample data
 tokenizer = AutoTokenizer.from_pretrained(MODEL_STUB)
@@ -30,6 +36,7 @@ inputs = tokenizer(SAMPLE_INPUT, return_tensors="pt", padding=True).to(
 # run the compressed model and decode the output
 output = compressed_model.generate(**inputs, max_length=50)
 print("========== SAMPLE GENERATION ==============")
+dispatch_for_generation(compressed_model)
 text_output = tokenizer.batch_decode(output)
 for sample in text_output:
     print(sample)

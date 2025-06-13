@@ -9,10 +9,10 @@ teacher_path = "neuralmagic/Llama-2-7b-gsm8k"
 output_dir = "./output_trl_sft_test_7b_gsm8k"
 
 model = AutoModelForCausalLM.from_pretrained(
-    model_path, torch_dtype="auto", device_map="auto"
+    model_path, torch_dtype="auto"
 )
 teacher = AutoModelForCausalLM.from_pretrained(
-    teacher_path, torch_dtype="auto", device_map="auto"
+    teacher_path, torch_dtype="auto"
 )
 
 tokenizer = AutoTokenizer.from_pretrained(model_path)
