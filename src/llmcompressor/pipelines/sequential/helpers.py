@@ -2,7 +2,7 @@ import contextlib
 import inspect
 from collections import deque
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set
 
 import torch
 from compressed_tensors.quantization import find_name_or_class_matches
@@ -435,16 +435,9 @@ def infer_sequential_targets(
     """
     if not sequential_targets:
         sequential_targets = model._get_no_split_modules("auto")
-        if len(sequential_targets) <= 0:
-            return ["Linear"]
 
-    # validate and infer
-    if sequential_targets is None:
-        return get_no_split_params(model)
-    elif isinstance(sequential_targets, str):
-        return [sequential_targets]
-    else:
-        return sequential_targets
+    if len(sequential_targets) <= 0:
+        return ["Linear"]
 
 
 def add_line_numbers(text: str) -> str:
