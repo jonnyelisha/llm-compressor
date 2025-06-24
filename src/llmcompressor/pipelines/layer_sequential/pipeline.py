@@ -64,7 +64,9 @@ class LayerSequentialPipeline(CalibrationPipeline):
         model_device = get_execution_device(model)
 
         # find layers
-        sequential_targets = infer_sequential_targets(model, dataset_args)
+        sequential_targets = infer_sequential_targets(
+            model, dataset_args.sequential_targets
+        )
         layers = match_modules(model, sequential_targets)
 
         LifecycleCallbacks.calibration_epoch_start()
