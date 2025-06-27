@@ -4,7 +4,7 @@ from packaging.version import Version
 from transformers import AutoModelForCausalLM, AutoTokenizer, __version__
 
 from llmcompressor import oneshot
-from llmcompressor.transformers.compression.helpers import calculate_offload_device_map
+from llmcompressor.utils import dispatch_for_generation
 
 # NOTE: transformers 4.49.0 has an attribute error with DeepSeek.
 # Please consider either downgrading your transformers version to a
@@ -13,18 +13,8 @@ from llmcompressor.transformers.compression.helpers import calculate_offload_dev
 # select a Mixture of Experts model for quantization
 MODEL_ID = "deepseek-ai/DeepSeek-V2.5"
 
-# adjust based off number of desired GPUs
-# if not enough memory is available, some layers will automatically be offlaoded to cpu
-device_map = calculate_offload_device_map(
-    MODEL_ID,
-    reserve_for_hessians=True,
-    num_gpus=2,
-    torch_dtype=torch.bfloat16,
-    trust_remote_code=True,
-)
-
 model = AutoModelForCausalLM.from_pretrained(
-    MODEL_ID, device_map=device_map, torch_dtype=torch.bfloat16, trust_remote_code=True
+    MODEL_ID, torch_dtype=torch.bfloat16, trust_remote_code=True
 )
 tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
 
@@ -70,9 +60,6 @@ ds = ds.map(tokenize, remove_columns=ds.column_names)
 # list so they remain at full precision
 recipe = "deepseek_recipe_w4a16.yaml"
 
-SAVE_DIR = MODEL_ID.split("/")[1] + "-W4A16"
-
-
 oneshot(
     model=model,
     dataset=ds,
@@ -81,13 +68,13 @@ oneshot(
     num_calibration_samples=NUM_CALIBRATION_SAMPLES,
     save_compressed=True,
     trust_remote_code_model=True,
-    output_dir=SAVE_DIR,
 )
 
 # Confirm generations of the quantized model look sane.
 # Generation is broken for deepseek models when using the latest transformers package
 if Version(__version__) < Version("4.48"):
     print("========== SAMPLE GENERATION ==============")
+    dispatch_for_generation(model)
     input_ids = tokenizer("Hello my name is", return_tensors="pt").input_ids.to("cuda")
     output = model.generate(input_ids, max_new_tokens=20)
     print(tokenizer.decode(output[0]))
@@ -97,6 +84,11 @@ else:
         "WARNING: cannot perform sample generation of "
         "deepseek models with transformers >= 4.48"
     )
+
+# Save to disk in compressed-tensors format.
+SAVE_DIR = MODEL_ID.rstrip("/").split("/")[-1] + "-W4A16"
+model.save_pretrained(SAVE_DIR, save_compressed=True)
+tokenizer.save_pretrained(SAVE_DIR)
 
 
 # Run the model on vLLM

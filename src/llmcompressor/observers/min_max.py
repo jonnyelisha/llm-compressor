@@ -2,11 +2,10 @@ from typing import Any, Optional, Tuple
 
 import torch
 from compressed_tensors.quantization.quant_args import QuantizationArgs
-from compressed_tensors.quantization.utils import calculate_qparams
+from compressed_tensors.quantization.utils import calculate_qparams, generate_gparam
 from compressed_tensors.utils import deprecated
 
 from llmcompressor.observers.base import Observer
-from llmcompressor.observers.helpers import generate_gparam
 
 __all__ = ["MinMaxObserver", "MovingAverageMinMaxObserver"]
 
@@ -23,6 +22,7 @@ class MinMaxObserver(Observer):
         self,
         quantization_args: QuantizationArgs,
         averaging_constant: float = 0.01,
+        **kwargs,
     ):
         super().__init__(quantization_args=quantization_args)
 

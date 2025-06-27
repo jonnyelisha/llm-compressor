@@ -2,7 +2,10 @@ import inspect
 from typing import Dict, List, Optional, Tuple, Union
 
 import torch
-from compressed_tensors.quantization import disable_quantization
+from compressed_tensors.quantization import (
+    disable_quantization,
+    find_name_or_class_matches,
+)
 from compressed_tensors.utils import (
     align_module_device,
     get_execution_device,
@@ -26,16 +29,11 @@ from llmcompressor.modifiers.utils.hooks import HooksMixin
 from llmcompressor.pipelines.cache import IntermediatesCache
 from llmcompressor.utils.fsdp.helpers import get_fsdp_parent
 from llmcompressor.utils.helpers import calibration_forward_context
-from llmcompressor.utils.pytorch.module import (
-    get_layers,
-    get_matching_layer,
-    get_parent_by_name,
-)
+from llmcompressor.utils.pytorch.module import get_layer_by_name, get_layers
 
 __all__ = ["AWQModifier"]
 
 
-# TODO (Brian INFERENG-531) Add support for offloaded models
 class AWQModifier(Modifier, QuantizationMixin):
     """
     Implements the AWQ (Activation-Weighted Quantization) algorithm,
@@ -114,7 +112,6 @@ class AWQModifier(Modifier, QuantizationMixin):
         requirements but requires more time to move data between cpu and execution
         device. Defaults to None, so cached args are not offloaded. Consider setting
         to torch.device("cpu") if you are encountering OOM errors
-    :param max_chunk_memory: maximum memory to use for each chunk of input activations
     :param duo_scaling: whether to use duo scaling, which uses both input activations
         and weights to determine the scaling factor
     """
@@ -126,7 +123,6 @@ class AWQModifier(Modifier, QuantizationMixin):
     sequential_targets: Union[str, List[str], None] = None
     mappings: Optional[List[AWQMapping]] = None
     offload_device: Optional[torch.device] = None
-    max_chunk_memory: int = 1024 * 1024 * 1024
     duo_scaling: bool = True
 
     # Private vars set during validation
@@ -307,77 +303,82 @@ class AWQModifier(Modifier, QuantizationMixin):
         repeat for model.layer.1 and so on
         """
         resolved_mappings: list[ResolvedMapping] = []
-        num_skipped_oproj_mappings = 0
-        for mapping in self.mappings:
-            to_smooth_layers = get_layers(mapping.smooth_layer, model)
-            for layer_name, smooth_layer in to_smooth_layers.items():
-                # always exclude `.weight_observer`, only want `.weight`
-                if layer_name not in self.ignore and not layer_name.endswith(
-                    "_observer"
-                ):
-                    balance_layers, balance_names = [], []
-                    for balance_suffix in mapping.balance_layers:
-                        # find the submodule that matches the activation layer
-                        balance_name, balance_layer = get_matching_layer(
-                            balance_suffix, layer_name, model
-                        )
-                        if not balance_layer:
-                            continue
+        for mapping_idx, mapping in enumerate(self.mappings):
+            smooth_layers = get_layers(mapping.smooth_layer, model)
+            smooth_names = [
+                smooth_name
+                for smooth_name in smooth_layers
+                if not find_name_or_class_matches(
+                    smooth_name, model, self.ignore + ["re:.*_observer$"]
+                )
+            ]
+
+            num_skipped_mappings = 0
+            pbar = tqdm(smooth_names)
+            for smooth_name in pbar:
+                pbar.set_description(
+                    f"Resolving mapping {mapping_idx+1}/{len(self.mappings)}"
+                    f" ({num_skipped_mappings} skipped)"
+                )
+                smooth_layer = smooth_layers[smooth_name]
+
+                smooth_parent_name = ".".join(smooth_name.split(".")[:-1])
+                smooth_parent = get_layer_by_name(smooth_parent_name, model)
+
+                balance_layers, balance_names = [], []
+                for balance_regex in mapping.balance_layers:
+                    # find the submodules that match the activation layer
+                    for balance_suffix, balance_layer in get_layers(
+                        balance_regex,
+                        smooth_parent,
+                    ).items():
+                        balance_name = f"{smooth_parent_name}.{balance_suffix}"
 
                         # exclude v_proj->o_proj mappings whose shapes are incompatible
                         # https://github.com/mit-han-lab/llm-awq/pull/67#issuecomment-1681632777
                         if (
                             isinstance(smooth_layer, torch.nn.Linear)
                             and isinstance(balance_layer, torch.nn.Linear)
-                            and ".o_proj" in balance_name
+                            and balance_name.endswith(".o_proj")
                             and (
                                 (
-                                    ".v_proj" in layer_name
+                                    smooth_name.endswith(".v_proj")
                                     and smooth_layer.out_features
                                     != balance_layer.in_features
                                 )
                                 or (
-                                    ".qkv_proj" in layer_name
+                                    smooth_name.endswith(".qkv_proj")
                                     and smooth_layer.out_features
                                     != 3 * balance_layer.in_features
                                 )
                             )
                         ):
-                            num_skipped_oproj_mappings += 1
+                            num_skipped_mappings += 1
                             continue
 
                         balance_layers.append(balance_layer)
                         balance_names.append(balance_name)
 
-                    if len(balance_layers) == 0:
-                        continue
+                if len(balance_layers) == 0:
+                    continue
 
-                    # each mapping can contain multiple layers to balance, but only
-                    # one layer to smooth
-                    if len(balance_layers) == 1:
-                        # for single balance layer, parent is the balance layer
-                        parent_name, parent = balance_name, balance_layer
-                    else:
-                        # for multiple balance layers,
-                        # parent of any balance layer is the parent
-                        parent_name, parent = get_parent_by_name(
-                            layer_name=balance_name, model=model
-                        )
-                    resolved_mappings.append(
-                        ResolvedMapping(
-                            layer_name,
-                            smooth_layer,
-                            balance_layers,
-                            balance_names=balance_names,
-                            parent=parent,
-                            parent_name=parent_name,
-                        )
+                elif len(balance_layers) == 1:
+                    # for single balance layer, parent is the balance layer
+                    parent_name, parent = balance_name, balance_layer
+                else:
+                    # for multiple balance layers, find lowest common parent
+                    parent_name, parent = get_lowest_common_parent(balance_names, model)
+
+                resolved_mappings.append(
+                    ResolvedMapping(
+                        smooth_name,
+                        smooth_layer,
+                        balance_layers,
+                        balance_names=balance_names,
+                        parent=parent,
+                        parent_name=parent_name,
                     )
-        if num_skipped_oproj_mappings > 0:
-            logger.info(
-                f"Excluded {num_skipped_oproj_mappings} from resolved "
-                "mappings due to shape mismatch"
-            )
+                )
         self._resolved_mappings = resolved_mappings
         return
 
@@ -401,11 +402,9 @@ class AWQModifier(Modifier, QuantizationMixin):
                 args: Tuple[torch.Tensor, ...],
                 _output: torch.Tensor,
             ):
-                # Assume that first argument is the input
-                inp = args[0].cpu().detach().squeeze()
-
                 self._smooth_activation_means[smooth_name] = _accumulate_mean(
-                    inp,
+                    # Assume that first argument is the input
+                    args[0].cpu().detach().squeeze(),
                     self._smooth_activation_means.get(smooth_name, None),
                 )
 
@@ -444,12 +443,14 @@ class AWQModifier(Modifier, QuantizationMixin):
 
         :param model: model to apply smoothing to
         """
-        for mapping in tqdm(self._resolved_mappings, desc="Smoothing"):
-            # NOTE: When using SequentialPipeline, not all the mappings
-            # will have cached activations in the segment being udpated
-            if mapping.smooth_name not in self._smooth_activation_means:
-                continue
-
+        # NOTE: When using SequentialPipeline, not all the mappings
+        # will have cached activations in the segment being udpated
+        mappings_to_smooth = [
+            mapping
+            for mapping in self._resolved_mappings
+            if mapping.smooth_name in self._smooth_activation_means
+        ]
+        for mapping in tqdm(mappings_to_smooth, desc="Smoothing"):
             smooth_layer = mapping.smooth_layer
             balance_layers = mapping.balance_layers
             parent_module = mapping.parent
@@ -472,16 +473,21 @@ class AWQModifier(Modifier, QuantizationMixin):
             with calibration_forward_context(model), HooksMixin.disable_hooks():
                 # [STEP 3]: Compute output of module
                 # could cache from hook, rather than recomputing here
-                fp16_output = self._run_samples(parent_module)
-                fp16_output = fp16_output.clip(
-                    torch.finfo(fp16_output.dtype).min,
-                    torch.finfo(fp16_output.dtype).max,
-                )
+                fp16_outputs = self._run_samples(parent_module)
+                if len(fp16_outputs) == 0 or all(f.numel() == 0 for f in fp16_outputs):
+                    logger.info(
+                        f"Skipping smooth_layer {mapping.smooth_name}, no activations "
+                        "found to scale. This can occasionally occur in MoE models "
+                        "when certain experts are not activated by calibration samples."
+                    )
+                    del self._smooth_activation_means[mapping.smooth_name]
+                    continue
+
                 x_mean = self._smooth_activation_means[mapping.smooth_name][0]
 
                 # [STEP 4]: Compute loss
                 best_scales = self._compute_best_scale(
-                    x_mean, w_mean, parent_module, balance_layers, fp16_output
+                    x_mean, w_mean, parent_module, balance_layers, fp16_outputs
                 )
 
             @torch.no_grad()
@@ -534,15 +540,17 @@ class AWQModifier(Modifier, QuantizationMixin):
             v.batch_intermediates.clear()
         self._assert_all_activations_consumed()
 
-    def _run_samples(self, module: Module) -> torch.Tensor:
+    def _run_samples(self, module: Module) -> List[torch.Tensor]:
         with align_module_device(module):
-            return torch.cat(
-                [
-                    module(**batch_kwargs)[0]
-                    for batch_kwargs in self._parent_args_cache[module]
-                ],
-                dim=0,
-            )
+            outputs = [
+                module(**batch_kwargs)
+                for batch_kwargs in self._parent_args_cache[module]
+            ]
+            return [
+                # If Tuple, assume that first argument is the input
+                output[0] if isinstance(output, Tuple) else output
+                for output in outputs
+            ]
 
     def _compute_best_scale(
         self,
@@ -550,7 +558,7 @@ class AWQModifier(Modifier, QuantizationMixin):
         w_mean: torch.Tensor,
         parent_module: torch.nn.Module,
         linears2scale: List[torch.nn.Linear],
-        fp16_output: torch.Tensor,
+        fp16_outputs: List[torch.Tensor],
     ) -> torch.Tensor:
         """
         Compute loss and select best scales
@@ -609,10 +617,10 @@ class AWQModifier(Modifier, QuantizationMixin):
 
             # W * X
             with HooksMixin.disable_hooks():
-                int_w_output = self._run_samples(parent_module)
+                int_w_outputs = self._run_samples(parent_module)
 
             # compute mean squared error (L2 norm)
-            loss = self._compute_loss(fp16_output, int_w_output, device)
+            loss = self._compute_loss(fp16_outputs, int_w_outputs, device)
 
             history.append(loss)
             if loss < best_error:
@@ -634,35 +642,25 @@ class AWQModifier(Modifier, QuantizationMixin):
     @torch.no_grad()
     def _compute_loss(
         self,
-        fp16_output: torch.Tensor,
-        int_w_output: torch.Tensor,
+        fp16_outputs: List[torch.Tensor],
+        int_w_outputs: List[torch.Tensor],
         device: torch.device,
     ) -> torch.Tensor:
         loss = 0.0
-        fp16_output_flat = fp16_output.view(-1)
-        int_w_output_flat = int_w_output.view(-1)
-        num_elements = fp16_output_flat.size(0)
-        element_size_bytes = fp16_output.element_size()
+        num_elements = 0
 
-        # Calculate chunk size dynamically based on max_chunk_memory
-        # Divide the max_chunk_memory by twice the element size
-        chunk_size = self.max_chunk_memory // (element_size_bytes * 2)
-        chunk_size = min(chunk_size, num_elements)
-
-        # Split the computation into chunks
-        fp16_chunks = torch.split(fp16_output_flat, chunk_size)
-        int_w_chunks = torch.split(int_w_output_flat, chunk_size)
-
-        # Compute the MSE loss for each chunk
-        for fp16_chunk, int_w_chunk in zip(fp16_chunks, int_w_chunks):
-            chunk_loss = (
-                (fp16_chunk.to(device) - int_w_chunk.to(device))
+        # Compute the MSE loss for each batch
+        for fp16_batch, int_w_batch in zip(fp16_outputs, int_w_outputs):
+            batch_loss = (
+                (fp16_batch.to(device) - int_w_batch.to(device))
+                .view(-1)
                 .float()
                 .pow(2)
                 .sum()
                 .item()
             )
-            loss += chunk_loss
+            loss += batch_loss
+            num_elements += fp16_batch.numel()
 
         # Normalize the loss by the total number of elements
         loss /= num_elements
@@ -736,3 +734,35 @@ def _accumulate_mean(
     new_count = prev_count + num_added
 
     return (prev_sum + sum_added) / new_count, new_count
+
+
+def get_lowest_common_parent(names: List[str], module: Module) -> Tuple[str, Module]:
+    """
+    Given a list of names, returns the lowest-scope common parent.
+
+    NOTE: function excludes parents of type ModuleList, which don't play
+    nicely with hooks because their forward method is never directly
+    called for MoE models. See Qwen3MoeSparseMoeBlock for example, experts
+    are selected based on router output and their forward method is called.
+    https://github.com/huggingface/transformers/blob/v4.52.4/src/transformers/models/qwen3_moe/modeling_qwen3_moe.py#L233
+
+    Returns name of parent and pointer to parent module
+
+    Implementation is a small alteration of os.path.commonprefix
+    https://docs.python.org/3/library/os.path.html#os.path.commonprefix
+    """
+    s1 = min(names)
+    s2 = max(names)
+    parent_name = ""
+    for i, c in enumerate(s1):
+        if c != s2[i]:
+            parent_name = s1[:i].rstrip(".")
+            break
+
+    while True:
+        if parent_name == "":
+            return "", module
+        parent = get_layer_by_name(parent_name, module)
+        if not isinstance(parent, torch.nn.ModuleList):
+            return parent_name, parent
+        parent_name = ".".join(parent_name.split(".")[:-1])

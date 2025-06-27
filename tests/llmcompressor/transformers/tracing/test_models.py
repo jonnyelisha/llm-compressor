@@ -7,6 +7,7 @@ from transformers import (
     Idefics3ForConditionalGeneration,
     Llama4ForConditionalGeneration,
     LlavaForConditionalGeneration,
+    Mistral3ForConditionalGeneration,
     MllamaForConditionalGeneration,
     Qwen2_5_VLForConditionalGeneration,
     Qwen2VLForConditionalGeneration,
@@ -19,7 +20,7 @@ from llmcompressor.utils.pytorch.module import get_no_split_params
 
 
 @pytest.mark.skipif(
-    os.getenv("HF_TOKEN") is None,
+    (not os.getenv("HF_TOKEN")),
     reason="Skipping tracing tests requiring gated model access",
 )
 @pytest.mark.parametrize(
@@ -87,6 +88,13 @@ from llmcompressor.utils.pytorch.module import get_no_split_params
             ["torchvision"],
         ),
         (
+            "mistralai/Mistral-Small-3.1-24B-Instruct-2503",
+            Mistral3ForConditionalGeneration,
+            ["MistralDecoderLayer"],
+            "vision",
+            [],
+        ),
+        (
             "google/gemma-3-4b-it",
             Gemma3ForConditionalGeneration,
             ["Gemma3DecoderLayer"],
@@ -128,7 +136,6 @@ def test_model_trace(model_id, model_class, targets, modality, backends):
         modality=modality,
         trust_remote_code=True,
         skip_weights=True,
-        device_map="cpu",
     )
 
     target_modules = get_target_modules(model, targets)

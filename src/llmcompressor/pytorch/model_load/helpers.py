@@ -15,7 +15,6 @@ COMPLETED_STAGES_FILENAME = "completed_stages.json"
 
 __all__ = [
     "copy_python_files_from_model_cache",
-    "fallback_to_cpu",
     "parse_dtype",
     "get_session_model",
     "get_completed_stages",
@@ -41,6 +40,20 @@ def save_checkpoint(
     :param save_safetensors: save model checkpoint using safetensors file type
     :param save_compressed: save model checkpoint using compressed-tensors format
     """
+    from llmcompressor.transformers.sparsification.compressed_tensors_utils import (
+        get_model_compressor,  # avoid circular import
+    )
+
+    # used for decompression
+    # unfortunately, if skip_sparsity_compression_stats==True, sparsity stats
+    # are computed twice. In the future, track sparsity from recipe or
+    # share recipe between compression and decompression
+    compressor = get_model_compressor(
+        model=model,
+        save_compressed=save_compressed,
+        skip_sparsity_compression_stats=skip_sparsity_compression_stats,
+    )
+
     # saving the model also saves the recipe
     model.save_pretrained(
         save_path,
@@ -51,21 +64,10 @@ def save_checkpoint(
     if processor is not None:
         processor.save_pretrained(save_path)
 
-
-def fallback_to_cpu(device: str) -> str:
-    """
-    Takes in a device string and forces it to cpu if cuda is not available
-
-    :param device: device id to check
-    :return: device modified for CUDA status
-    """
-    if "cuda" in device and not torch.cuda.is_available():
-        logger.warning(
-            f"Requested {device} but CUDA is not available, falling back to CPU"
-        )
-        return "cpu"
-
-    return device
+    # decompression: saving the model modifies the model strcuture
+    # as this is only a checkpoint, decompress model to enable future training/oneshot
+    if compressor is not None:
+        compressor.decompress_model(model)
 
 
 def parse_dtype(dtype_arg: Union[str, torch.dtype]) -> torch.dtype:

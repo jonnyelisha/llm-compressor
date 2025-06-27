@@ -1,11 +1,9 @@
 import os
-import re
 import weakref
 from functools import wraps
-from typing import Dict, Optional
+from typing import Optional
 
 import torch
-import transformers
 from accelerate.accelerator import get_state_dict_offloaded_model
 from compressed_tensors import (
     CompressionFormat,
@@ -20,7 +18,6 @@ from transformers import PreTrainedModel
 
 from llmcompressor.core import active_session
 from llmcompressor.pytorch.model_load.helpers import copy_python_files_from_model_cache
-from llmcompressor.recipe.recipe import Recipe
 from llmcompressor.transformers.compression.quantization_format import (
     infer_quantization_format,
 )
@@ -86,50 +83,27 @@ def modify_save_pretrained(model: PreTrainedModel):
             :param kwargs: additional kwargs to pass on to model.save_pretrained
             """
 
-            # HACK: Override the dtype_byte_size function in transformers to
-            # support float8 types. Fix is posted upstream
-            # https://github.com/huggingface/transformers/pull/30488
-            transformers.modeling_utils.dtype_byte_size = new_dtype_byte_size
-
-            # state_dict gets passed in as a kwarg for FSDP models
-            state_dict = kwargs.pop("state_dict", None)
-            if state_dict is None:
-                logger.info("Fetching state_dict - this may take some time")
-                state_dict = get_state_dict_offloaded_model(model)
-
-            logger.info("Fetching compressor")
+            # compress model using compressor
             compressor = get_model_compressor(
                 model=model,
                 sparsity_config=sparsity_config,
                 quantization_format=quantization_format,
                 save_compressed=save_compressed,
                 skip_sparsity_compression_stats=skip_sparsity_compression_stats,
-                state_dict=state_dict,
                 disable_sparse_compression=disable_sparse_compression,
             )
+            if compressor is not None:
+                compressor.compress_model(model)
 
-            if compressor is None:
-                # model is not compressed or quantized, save as normal
-                original_save_pretrained_func = original_save_pretrained.__get__(
-                    model, model_class
-                )
-                original_save_pretrained_func(
-                    save_directory, state_dict=state_dict, **kwargs
-                )
-                return
+            # save (compressed) model structure
+            original_save_pretrained.__get__(model, model_class)(
+                save_directory,
+                safe_serialization=safe_serialization,
+                **kwargs,
+            )
 
-            # make sure we're on the main process when saving
-            if state_dict is not None and len(state_dict) > 0:
-                compressed_state_dict = compressor.compress(
-                    model, state_dict, show_progress=True
-                )
-                logger.info("Saving compressed model to disk")
-                original_save_pretrained.__get__(model, model_class)(
-                    save_directory,
-                    state_dict=compressed_state_dict,
-                    safe_serialization=safe_serialization,
-                    **kwargs,
-                )
+            # update config to reflect compression
+            if compressor is not None:
                 compressor.update_config(save_directory)
 
             # update existing recipe
@@ -144,18 +118,6 @@ def modify_save_pretrained(model: PreTrainedModel):
     # wrap save_pretrained if not already
     if not getattr(model.save_pretrained, "_overridden", False):
         model.save_pretrained = save_pretrained_compressed(model.save_pretrained)
-
-
-# HACK: Override the dtype_byte_size function in transformers to support float8 types
-# Fix is posted upstream https://github.com/huggingface/transformers/pull/30488
-def new_dtype_byte_size(dtype):
-    if dtype == torch.bool:
-        return 1 / 8
-    bit_search = re.search(r"[^\d](\d+)_?", str(dtype))
-    if bit_search is None:
-        raise ValueError(f"`dtype` is not a valid dtype: {dtype}.")
-    bit_size = int(bit_search.groups()[0])
-    return bit_size // 8
 
 
 def patch_tied_tensors_bug(model: torch.nn.Module):
@@ -197,7 +159,6 @@ def get_model_compressor(
     quantization_format: Optional[str] = None,
     save_compressed: bool = True,
     skip_sparsity_compression_stats: bool = True,
-    state_dict: Optional[Dict] = None,
     disable_sparse_compression: bool = False,
 ):
     """
@@ -211,12 +172,8 @@ def get_model_compressor(
     :param save_compressed: boolean representing to save in a compressed
         format
     :param skip_sparsity_compression_stats: bool allowing compression stats on std out
-    :param state_dict: state_dict of the model
     :param disable_sparse_compression: bool to skip sparse compression
     """
-    # find offloaded state dict if none is provided
-    if state_dict is None:
-        state_dict = get_state_dict_offloaded_model(model)
 
     if sparsity_config is None:
         """
@@ -244,6 +201,8 @@ def get_model_compressor(
             )
             sparsity_config = None
         else:
+            state_dict = get_state_dict_offloaded_model(model)
+
             sparsity_config = SparsityConfigMetadata.from_pretrained(
                 model,
                 state_dict=state_dict,
@@ -294,17 +253,10 @@ def update_and_save_recipe(model_stub: str, save_directory: str):
         existing recipe
     :param save_directory: path to save combined existing recipe and current recipe
     """
-    recipes_to_save = []
+
     existing_recipe = infer_recipe_from_model_path(model_stub)
-    if existing_recipe is not None:
-        recipes_to_save.append(existing_recipe)
 
-    new_recipe = active_session().lifecycle.recipe
-    if new_recipe is not None:
-        recipes_to_save.append(new_recipe)
+    recipe = active_session().lifecycle.recipe
 
-    recipe = Recipe.simplify_combine_recipes(recipes_to_save)
-
-    # save recipe
     recipe_path = os.path.join(save_directory, RECIPE_FILE_NAME)
-    recipe.yaml(recipe_path)
+    recipe.yaml(file_path=recipe_path, existing_recipe_path=existing_recipe)

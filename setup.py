@@ -112,19 +112,20 @@ setup(
     install_requires=[
         "loguru",
         "pyyaml>=5.0.0",
-        "numpy>=1.17.0,<2.0",
+        "numpy>=1.17.0",
         "requests>=2.0.0",
         "tqdm>=4.0.0",
-        "torch>=1.7.0",
-        "transformers>4.0,<5.0",
+        # torch 1.10 and 1.11 do not support quantized onnx export
+        "torch>=1.7.0,!=1.10,!=1.11",
+        "transformers>4.0,<4.53.0",
         "datasets",
         "accelerate>=0.20.3,!=1.1.0",
         "pynvml",
         "pillow",
         (
-            "compressed-tensors==0.9.4"
+            "compressed-tensors==0.10.2"
             if BUILD_TYPE == "release"
-            else "compressed-tensors>=0.9.5a2"
+            else "compressed-tensors>=0.10.3a2"
         ),
     ],
     extras_require={
@@ -139,7 +140,7 @@ setup(
             "beautifulsoup4~=4.12.3",
             "cmarkgfm~=2024.1.14",
             "trl>=0.10.1",
-            "pandas",
+            "pandas<2.3.0",
             "torchvision",
             "librosa",
             "soundfile",
