@@ -10,7 +10,7 @@ runs:
 
         # generate and source flags
         FLAGS_FILE="coverage_flags.sh"
-        nmre-generate-coverage-flags --package "llcompressor" --output-file "$FLAGS_FILE"
+        nmre-generate-coverage-flags --package "llmcompressor" --output-file "$FLAGS_FILE"
         source "$FLAGS_FILE"
         rm "$FLAGS_FILE"
 
