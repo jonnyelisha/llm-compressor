@@ -51,7 +51,10 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: base-tests-coverage-results
-          path: coverage-results/*
+          path: |
+            .coverage
+            coverage-html
+            coverage.json
           retention-days: 5
 
   pytorch-tests:
@@ -90,7 +93,10 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: pytorch-tests-coverage-results
-          path: coverage-results/*
+          path: |
+            .coverage
+            coverage-html
+            coverage.json
           retention-days: 5
 
 
@@ -130,5 +136,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: compat-pytorch-tests-coverage-results
-          path: coverage-results/*
+          path: |
+            .coverage
+            coverage-html
+            coverage.json
           retention-days: 5
