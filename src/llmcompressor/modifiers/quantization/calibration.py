@@ -282,6 +282,22 @@ def initialize_quantized_kv_cache(module: Module):
     setattr(module, "kv_cache", quantized_kv_cache)
 
 
+def initialize_attention_observers(module: Module):
+    input_args = getattr_chain(module, "quantization_scheme.input_activations", None)
+    if input_args is not None:
+        initialize_observer(module, "q", input_args)
+        initialize_observer(module, "k", input_args)
+        initialize_observer(module, "v", input_args)
+
+
+def calibrate_attention(
+    module: Module, query: torch.Tensor, key: torch.Tensor, value: torch.Tensor
+):
+    calibrate_activations(module, value=query, base_name="q")
+    calibrate_activations(module, value=key, base_name="k")
+    calibrate_activations(module, value=value, base_name="v")
+
+
 def apply_calibration_status(module: Module):
     scheme = getattr(module, "quantization_scheme", None)
     if not scheme:

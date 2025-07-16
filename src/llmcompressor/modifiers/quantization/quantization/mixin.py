@@ -232,6 +232,7 @@ class QuantizationMixin(HooksMixin):
         # kv_cache activations. Within `apply_quantization_config`, the config is
         # modified to use attention output quantization if a kv_cache_scheme exists
         if is_attention and output:
+            # initialize_attention_observers(module)  # TODO: attnq
             initialize_quantized_kv_cache(module)
 
         # output activations
@@ -240,6 +241,11 @@ class QuantizationMixin(HooksMixin):
 
     def _initialize_hooks(self, model: torch.nn.Module) -> Set[RemovableHandle]:
         hooks = set()
+
+        # TODO: attnq
+        # attention_impl = enable_compressed_attention(model)
+        # hooks.add(self.register_hook(attention_impl, calibrate_attention, "calib"))
+
         for module in model.modules():
             if not hasattr(module, "quantization_scheme"):
                 continue
