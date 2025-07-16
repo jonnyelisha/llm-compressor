@@ -215,7 +215,40 @@ class SpinQuantModifier(Modifier, use_enum_values=True):
         )
 
     def _create_r3_scheme(self) -> TransformScheme:
-        raise NotImplementedError()
+        return (
+            TransformScheme(
+                type=self.transform_type,
+                randomize=self.randomize,
+                requires_grad=self.learnable,
+                apply=[
+                    TransformArgs(
+                        targets=[self.mappings.attn],
+                        location="attn_q",
+                    ),
+                    TransformArgs(
+                        targets=[self.mappings.attn],
+                        location="attn_k",
+                    ),
+                ],
+            ),
+        )
 
     def _create_r4_scheme(self) -> TransformScheme:
-        raise NotImplementedError()
+        return (
+            TransformScheme(
+                type=self.transform_type,
+                randomize=self.randomize,
+                requires_grad=self.learnable,
+                apply=[
+                    TransformArgs(
+                        targets=[*self.mappings.mlp_out],
+                        location="input",
+                    ),
+                    TransformArgs(
+                        targets=[*self.mappings.mlp_out],
+                        location="weight_input",
+                        inverse=True,
+                    ),
+                ],
+            ),
+        )

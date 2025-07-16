@@ -244,7 +244,7 @@ class QuantizationMixin(HooksMixin):
 
         # TODO: attnq
         # attention_impl = enable_compressed_attention(model)
-        # hooks.add(self.register_hook(attention_impl, calibrate_attention, "calib"))
+        # hooks |= register_calibrate_attn_hooks(self, attention_impl)
 
         for module in model.modules():
             if not hasattr(module, "quantization_scheme"):
