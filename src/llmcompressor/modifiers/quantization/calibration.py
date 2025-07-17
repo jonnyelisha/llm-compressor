@@ -21,6 +21,8 @@ from llmcompressor.observers import Observer
 from llmcompressor.utils.helpers import getattr_chain
 
 if TYPE_CHECKING:
+    from compressed_tensors.modeling.attention import CompressedAttentionImpl
+
     from llmcompressor.modifiers.utils.hooks import HooksMixin
 
 
@@ -213,7 +215,7 @@ def calibrate_activations(module: Module, value: torch.Tensor, base_name: str):
 
 
 def register_calibrate_attn_hooks(
-    modifier: HooksMixin, attention_impl
+    modifier: "HooksMixin", attention_impl: "CompressedAttentionImpl"
 ) -> Set[RemovableHandle]:
     return {
         modifier.register_hook(
